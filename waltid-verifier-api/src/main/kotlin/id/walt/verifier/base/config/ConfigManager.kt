@@ -25,7 +25,7 @@ object ConfigManager {
         runCatching {
             ConfigLoaderBuilder.default()
                 .addCommandLineSource(args)
-                .addFileSource("config/$id.conf", optional = true)
+                .addResourceSource("/config/$id.conf", optional = true)
                 .addEnvironmentSource()
 
                 .withExplicitSealedTypes()

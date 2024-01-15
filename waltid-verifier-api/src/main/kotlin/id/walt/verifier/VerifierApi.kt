@@ -224,6 +224,8 @@ fun Application.verfierApi() {
                     val presentationSession = maybePresentationSessionResult.getOrThrow()
                     if (presentationSession.verificationResult == true) {
                         val redirectUri = sessionVerificationInfo.successRedirectUri?.replace("\$id", session.id) ?: ""
+                        // insert VC data
+
                         call.respond(HttpStatusCode.OK, redirectUri)
                     } else {
                         val policyResults = OIDCVerifierService.policyResults[session.id]

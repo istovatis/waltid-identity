@@ -23,6 +23,14 @@ data class JwtIssuanceRequest(
 ) : BaseIssuanceRequest()
 
 @Serializable
+data class JwtEmfisisIssuanceRequest(
+    val issuanceKey: JsonObject,
+    val issuerDid: String,
+    val username: String,
+    val mapping: JsonObject? = null
+)
+
+@Serializable
 data class SdJwtIssuanceRequest(
     override val issuanceKey: JsonObject,
     override val issuerDid: String,

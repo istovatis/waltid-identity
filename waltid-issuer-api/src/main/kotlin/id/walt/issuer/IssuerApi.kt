@@ -1,5 +1,7 @@
 package id.walt.issuer
 
+import id.walt.credentials.CredentialBuilder
+import id.walt.credentials.CredentialBuilderType
 import id.walt.credentials.vc.vcs.W3CVC
 import id.walt.crypto.keys.*
 import id.walt.did.dids.DidService
@@ -22,6 +24,8 @@ import io.ktor.server.routing.*
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlin.time.Duration.Companion.minutes
+import id.walt.crypto.utils.JsonUtils.toJsonObject
+import kotlin.time.Duration.Companion.days
 
 fun Application.issuerApi() {
     routing {
@@ -184,6 +188,94 @@ fun Application.issuerApi() {
                         OidcApi.setIssuanceDataForIssuanceId(
                             issuanceSession.id,
                             listOf(CIProvider.IssuanceSessionData(key, issuerDid, issuanceRequest))
+                        )  // TODO: Hack as this is non stateless because of oidc4vc lib API
+                        println("issuanceSession: $issuanceSession")
+
+                        val offerRequest = CredentialOfferRequest(issuanceSession.credentialOffer!!)
+                        println("offerRequest: $offerRequest")
+
+                        val offerUri = OidcApi.getCredentialOfferRequestUrl(
+                            offerRequest,
+                            CROSS_DEVICE_CREDENTIAL_OFFER_URL + OidcApi.baseUrl.removePrefix("https://")
+                                .removePrefix("http://") + "/"
+                        )
+                        println("Offer URI: $offerUri")
+
+                        context.respond(
+                            HttpStatusCode.OK,
+                            offerUri
+                        )
+                    }
+                    post("issue-emfisis", {
+                        summary = "Signs credential with JWT and starts an OIDC credential exchange flow."
+                        description = "This endpoint issues a W3C Verifiable Credential, and returns an issuance URL "
+
+                        request {
+                            body<JwtIssuanceRequest> {
+                                description =
+                                    "Pass the unsigned credential that you intend to issue as the body of the request."
+                                example("OpenBadgeCredential example", openBadgeCredentialExampleJsonString)
+                                example("UniversityDegreeCredential example", universityDegreeCredential)
+                                required = true
+                            }
+                        }
+
+                        response {
+                            "200" to {
+                                description = "Credential signed (with the *proof* attribute added)"
+                                body<String> {
+                                    example(
+                                        "Issuance URL URL",
+                                        "openid-credential-offer://localhost/?credential_offer=%7B%22credential_issuer%22%3A%22http%3A%2F%2Flocalhost%3A8000%22%2C%22credentials%22%3A%5B%22VerifiableId%22%5D%2C%22grants%22%3A%7B%22authorization_code%22%3A%7B%22issuer_state%22%3A%22501414a4-c461-43f0-84b2-c628730c7c02%22%7D%7D%7D"
+                                    )
+                                }
+                            }
+                        }
+                    }) {
+                        val issuanceRequest = context.receive<JwtEmfisisIssuanceRequest>()
+                        val key = KeySerialization.deserializeKey(issuanceRequest.issuanceKey)
+                            .onFailure { throw IllegalArgumentException("Invalid key was supplied, error occurred is: $it") }
+                            .getOrThrow()
+                        val issuerDid = issuanceRequest.issuerDid ?: DidService.registerByKey("key", key).did
+                        val username = issuanceRequest.username
+                        val myCustomData = mapOf(
+                            "entityIdentification" to "12345",
+                            "issuingAuthority" to "Emfisis",
+                            "username" to username
+                        ).toJsonObject()
+
+                        // build a W3C V2.0 credential
+                        val vc = CredentialBuilder(CredentialBuilderType.W3CV11CredentialBuilder).apply {
+                            addContext("https://www.w3.org/ns/credentials/examples/v2") // [W3CV2 VC context, custom context]
+                            addType("Emfisis") // [VerifiableCredential, MyCustomCredential]
+
+                            // credentialId = "123"
+                            randomCredentialSubjectUUID() // automatically generate
+                            subjectDid = "did:key:xyz"    // possibly later overridden by data mapping during issuance
+
+                            validFromNow()                // set validFrom per current time
+                            validFor(90.days)             // set expiration date to now + 3 months
+
+                            useStatusList2021Revocation("https://university.example/credentials/status/3", 94567)
+
+                            useCredentialSubject(myCustomData)
+                        }.buildW3C()
+
+                        print(vc.toPrettyJson())
+                        val jwtIssuanceRequest = JwtIssuanceRequest(issuanceRequest.issuanceKey, issuanceRequest.issuerDid, vc, issuanceRequest.mapping)
+                        val credentialOfferBuilder = OidcIssuance.issuanceRequestsToCredentialOfferBuilder(jwtIssuanceRequest)
+
+                        val issuanceSession = OidcApi.initializeCredentialOffer(
+                            credentialOfferBuilder = credentialOfferBuilder,
+                            expiresIn = 5.minutes,
+                            allowPreAuthorized = true
+                        )
+
+                        //val nonce = issuanceSession.cNonce ?: throw IllegalArgumentException("No cNonce set in issuanceSession?")
+
+                        OidcApi.setIssuanceDataForIssuanceId(
+                            issuanceSession.id,
+                            listOf(CIProvider.IssuanceSessionData(key, issuerDid, jwtIssuanceRequest))
                         )  // TODO: Hack as this is non stateless because of oidc4vc lib API
                         println("issuanceSession: $issuanceSession")
 
